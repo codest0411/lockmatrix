@@ -12,13 +12,13 @@
     "audit",
     "sarif"
   ],
-  "homepage": "https://github.com/chirag127/lockmatrix#readme",
+  "homepage": "https://github.com/codest0411/lockmatrix#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chirag127/lockmatrix.git"
+    "url": "https://github.com/codest0411/lockmatrix.git"
   },
   "bugs": {
-    "url": "https://github.com/chirag127/lockmatrix/issues"
+    "url": "https://github.com/codest0411/lockmatrix/issues"
   },
   "license": "MIT",
   "author": "chirag127",
