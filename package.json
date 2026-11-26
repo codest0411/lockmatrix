@@ -1,0 +1,60 @@
+{
+  "name": "lockmatrix",
+  "version": "0.1.0",
+  "description": "Statically audit npm package-lock.json for missing platform-specific optional dependencies across OS, CPU, and libc targets.",
+  "keywords": [
+    "npm",
+    "package-lock",
+    "lockfile",
+    "optionalDependencies",
+    "cross-platform",
+    "ci",
+    "audit",
+    "sarif"
+  ],
+  "homepage": "https://github.com/chirag127/lockmatrix#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chirag127/lockmatrix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chirag127/lockmatrix/issues"
+  },
+  "license": "MIT",
+  "author": "chirag127",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "lockmatrix": "./bin/lockmatrix.js"
+  },
+  "main": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "types/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:types": "tsc --emitDeclarationOnly",
+    "test": "node --test test/**/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=90 test/**/*.test.js",
+    "prepack": "npm run build:types"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,77 @@
+You are a senior Node.js engineer, open-source maintainer and application-security reviewer. Build a ship-ready, public, MIT-licensed npm package called "lockmatrix" (verify the name is free with `npm view lockmatrix`; if taken choose the best available alternative and tell me). Work autonomously in the phases below, running tests after every phase. Never invent facts, links, download numbers or package names. If something is ambiguous, state your assumption in one line and continue.
+
+## 1. The problem
+A package-lock.json generated on one OS/CPU can omit the platform-specific optional native packages (e.g. @rollup/rollup-linux-x64-gnu, @esbuild/linux-x64, @swc/core-*, lightningcss-*, sharp platform builds) needed on other platforms. `npm ci` on another OS then fails with "Cannot find module ..." or "Missing: ... from lock file", or silently skips the binary. See npm/cli issues #4828 and #8320. lockmatrix statically audits a lockfile and reports which platform-specific optional dependencies are missing and which target platforms (os/cpu/libc) are not covered BEFORE CI fails. Fully offline, read-only.
+
+## 2. Hard constraints
+- JavaScript (ESM, "type": "module"), JSDoc types checked with `tsc --checkJs` (typescript as devDependency only; emit .d.ts).
+- ZERO runtime dependencies. Node built-ins only (node:fs, node:path, node:util parseArgs, node:child_process only for the optional verify mode, node:test, node:assert).
+- Cross-platform: Windows, macOS, Linux. Handle CRLF and UTF-8 BOM.
+- Support all currently non-EOL Node LTS lines (check the official release schedule; set "engines").
+- Everything free: GitHub Actions, CodeQL, Dependabot, npm provenance. No AI APIs, no paid services, no keys, no telemetry, no network at runtime (except the explicitly opt-in verify mode, documented as possibly using the network).
+- Dev dependencies ONLY: typescript, eslint (+ @eslint/js).
+- Beginner-maintainable: small modules, clear names, comments explaining WHY.
+
+## 3. Phase 0 - validate before coding (do first)
+1. Check whether current npm (latest 10.x/11.x) still has the bug: in a temp folder, install a package with platform-specific optionals (e.g. vite or esbuild) and inspect the generated package-lock.json for other platforms' entries; test the "node_modules present" scenario from npm/cli#4828. Record exact npm versions and results in docs/NPM-BEHAVIOR.md. (Network is allowed in Phase 0 only; keep only small sanitized fixtures, never full real lockfiles.)
+2. Search the web and npm for existing tools that check lockfile platform coverage (look for anything similar to: lockfile lint, lockfile-lint, npm `--os/--cpu/--libc` flags on `npm ci --dry-run`, pnpm supportedArchitectures, syncpack). Write docs/COMPETITORS.md with real links, what each does and does NOT do, and one honest differentiation paragraph.
+3. If npm has fixed the bug completely OR an existing tool already does this, STOP and tell me, with evidence.
+
+## 4. Behaviour (MVP)
+CLI: `lockmatrix [path-to-lockfile-or-project-dir] [options]`; programmatic API; usable in CI and as a pre-push hook.
+Input: npm package-lock.json or npm-shrinkwrap.json with lockfileVersion 2 or 3 (the "packages" map). lockfileVersion 1 or unknown => exit 2 with a clear message (v1 lacks the data). yarn.lock and pnpm-lock.yaml are out of scope for MVP (document under Future work; pnpm needs a YAML parser, which would break the zero-dependency rule).
+Algorithm:
+1. Parse and convert the lockfile into Maps (never trust keys; avoid prototype pollution).
+2. For every package entry that declares `optionalDependencies`, resolve each declared name using Node's resolution order inside the lock tree: `<parentPath>/node_modules/<name>`, then each ancestor's node_modules, up to the root. Handle nested and hoisted entries, workspaces and `link: true` entries.
+3. Declared optional dependency with NO resolvable lock entry => finding.
+4. For resolvable entries, read `os`, `cpu`, `libc` arrays (they may be absent = any; support negations like "!win32") and compute which target platforms each entry satisfies.
+Targets: default matrix = linux-x64-glibc, linux-x64-musl, linux-arm64-glibc, win32-x64, darwin-arm64, darwin-x64 (configurable with `--targets` and config; presets such as `github-actions` and `common-dev`; allow narrowing to the platforms the user actually uses).
+Rules:
+- LM001 (error): parent declares an optional dependency that is missing from the lockfile (pruned). Show parent, missing name, and the platform inferred from the name suffix ONLY as a labeled heuristic ("inferred").
+- LM002 (error): for a "platform-variant group" (a parent whose optional deps carry os/cpu/libc), none of the present entries satisfies a requested target platform.
+- LM003 (warn): all platform-specific entries across the whole lockfile cover exactly one os/cpu pair => lockfile was probably generated on a single machine.
+- LM004 (info): summary matrix (rows = variant groups, columns = targets, cells = present/missing).
+Remediation text: print a short, accurate explanation and suggested steps, labelled "verify before running". Do not claim a fix works unless Phase 0 confirmed it. Never modify files. No --fix in MVP.
+Optional `--verify-with-npm` (off by default): copy ONLY package.json and the lockfile into a temp directory, run `npm ci --dry-run --ignore-scripts` with the `--os`, `--cpu`, `--libc` flags for each target (first confirm those flags exist in the installed npm; otherwise skip with a message), and compare with lockmatrix's result. Clean up the temp dir.
+Output: human (colored only if TTY and NO_COLOR unset), `--format json`, `--format github` (annotations), `--format sarif`. Exit codes: 0 clean, 1 findings at/above `--fail-on` (default error), 2 usage/runtime error.
+Config: optional `lockmatrix.config.json` (strict schema validation with clear errors): `targets`, `ignorePackages` (each with required reason), `failOn`.
+
+## 5. Security requirements (implement AND test)
+- Lockfiles are UNTRUSTED input (pull requests from forks). Enforce a max file size (default 100 MB) and a max package-entry count; fail gracefully.
+- Never touch the filesystem using paths taken from the lockfile; lock keys are only used as Map keys.
+- Prototype-pollution safe (Map / Object.create(null); test keys like "__proto__", "constructor", "prototype").
+- Output injection: strip ANSI/control characters from package names and strings before printing; escape GitHub workflow-command syntax (%, \r, \n, ::) in annotations; escape SARIF/JSON properly. Test with malicious names.
+- ReDoS-safe: no backtracking-prone regexes on untrusted strings; test with adversarial inputs under a time limit.
+- If --verify-with-npm is used: execFile (never exec / shell: true) with argument arrays, timeouts, max buffers, temp dir with restricted contents, always cleaned up. Handle Windows npm.cmd safely (Node's 2024 hardening forbids spawning .cmd without a shell; resolve npm via `npm_execpath` or run npm-cli.js with process.execPath) and test that logic.
+- No eval/Function, no dynamic require of user input, no network calls outside verify mode.
+- SECURITY.md with private vulnerability reporting via GitHub Security Advisories.
+- Supply chain: no runtime deps, `npm audit` clean, lockfile committed, GitHub Actions pinned to commit SHAs with least-privilege `permissions:`, Dependabot (actions + npm), CodeQL workflow, publishing via GitHub Actions with `--provenance`, `"files"` allowlist (verify with `npm pack --dry-run`).
+
+## 6. Testing requirements
+- `node:test`. Hand-written small lockfile fixtures (v2 and v3) shaped like real rollup/esbuild/swc/lightningcss/sharp/fsevents data from Phase 0: complete lockfile, mac-only lockfile, linux-only lockfile, musl/glibc variants, negated os values, missing os/cpu/libc fields, nested and hoisted optionals, workspaces, link entries, empty lockfile, lockfileVersion 1, malformed JSON, BOM/CRLF, duplicate keys.
+- Property-based style tests (hand-rolled generator, no libraries): random lock trees must never crash and results must be deterministic regardless of key order.
+- Fuzz: garbage and truncated JSON must produce exit code 2, never an unhandled exception.
+- Performance test: synthetic lockfile with 50,000 packages analyzed in a few seconds; assert a generous time limit.
+- Security tests from section 5 (malicious names, prototype keys, oversized input, control characters in output, annotation injection).
+- Every output format snapshot-tested; exit codes tested; CLI end-to-end tests run the real binary.
+- Verify-mode tests use a fake npm executable on PATH (no real network), plus a test that proves no files outside the temp dir are touched.
+- Coverage: `node --test --experimental-test-coverage`, enforce >= 90% line coverage in CI.
+- CI matrix: ubuntu, windows, macos x supported Node versions; jobs for lint, typecheck, pack-content check, a smoke test that installs the packed tarball into a clean folder, and dogfooding (run lockmatrix on its own repo lockfile).
+
+## 7. Project structure
+src/ (cli.js, index.js, lockfile.js, resolve.js, platforms.js, groups.js, rules/*.js, reporters/*.js, verify-npm.js, config.js, sanitize.js), bin/lockmatrix.js, test/ (unit/, e2e/, fixtures/, helpers), docs/ (COMPETITORS.md, NPM-BEHAVIOR.md, RULES.md, LIMITATIONS.md, SECURITY-REVIEW.md), .github/ (workflows/ci.yml, codeql.yml, release.yml, dependabot.yml, ISSUE_TEMPLATE/, PULL_REQUEST_TEMPLATE.md), README.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, CHANGELOG.md, LICENSE (MIT), eslint.config.js, tsconfig for checkJs, .gitignore, .editorconfig.
+Also provide: a GitHub Actions snippet for consumers (running on pull requests that touch package-lock.json), a pre-push hook example.
+
+## 8. README requirements
+Problem statement with the real error messages, a before/after example, `npx lockmatrix` quick start, rule reference with examples, config reference, CI recipe, an honest "does npm still have this bug?" section that cites docs/NPM-BEHAVIOR.md, Limitations (npm lockfile v2/v3 only, name-suffix inference is a heuristic, cannot know a registry's platform metadata for packages absent from the lockfile), FAQ ("why not just run npm ci in CI?" - answer: it fails late and sometimes silently skips), comparison table with real tools from Phase 0. No hype, no fake badges.
+
+## 9. Process and deliverables
+- Phases: (0) validation, (1) scaffold + CI, (2) lockfile parser + resolver, (3) platform model + rules, (4) CLI + config + reporters, (5) verify mode, (6) tests to coverage target, (7) docs, (8) your own security review with checklist in docs/SECURITY-REVIEW.md, (9) release readiness.
+- After each phase run lint, typecheck and tests, fix failures, then give a 3-line status.
+- Do not publish to npm or push anything. Finish with: a release checklist for me (npm 2FA, trusted publishing/provenance, creating the GitHub repo, private vulnerability reporting, first tag), exact commands, known limitations, and a first-30-days feedback plan (issue templates, a pinned "false positives" issue, 3 honest places to share it, such as commenting usefully on npm/cli#4828 only if relevant).
+- Be critical: if a design decision is weak, say so and propose the smallest safe alternative.
+
+## 10. Acceptance criteria (verify each, report pass/fail)
+Tests pass on 3 OSes; coverage >= 90%; zero runtime dependencies; `npm pack --dry-run` shows only intended files; `npm audit` clean; no `exec`/`eval`/`shell: true` in src; malicious package names cannot inject terminal escapes or GitHub annotations; a 50k-package lockfile finishes within the time limit; tool never writes to the project; every rule has a test and a doc entry; README examples actually run; Phase 0 documents (NPM-BEHAVIOR.md, COMPETITORS.md) contain real, checkable evidence.
+
+Begin with Phase 0 now.
